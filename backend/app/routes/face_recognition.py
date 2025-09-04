@@ -1,0 +1,156 @@
+from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.services.face_recognition_service import FaceRecognitionService
+import logging
+import base64
+
+face_recognition_bp = Blueprint('face_recognition', __name__)
+logger = logging.getLogger(__name__)
+
+@face_recognition_bp.route('/detect', methods=['POST'])
+@jwt_required()
+def detect_faces():
+    """Detect faces in image/video frame"""
+    try:
+        data = request.get_json()
+        
+        if 'image_data' not in data:
+            return jsonify({'error': 'No image data provided'}), 400
+        
+        # Decode base64 image
+        image_data = base64.b64decode(data['image_data'])
+        
+        # Detect faces
+        detection_result = FaceRecognitionService.detect_faces(image_data)
+        
+        return jsonify({
+            'faces_detected': len(detection_result['faces']),
+            'faces': detection_result['faces'],
+            'processing_time': detection_result['processing_time']
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Face detection error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@face_recognition_bp.route('/embedding', methods=['POST'])
+@jwt_required()
+def generate_embedding():
+    """Generate face embedding for enrollment"""
+    try:
+        data = request.get_json()
+        
+        if 'image_data' not in data:
+            return jsonify({'error': 'No image data provided'}), 400
+        
+        # Decode base64 image
+        image_data = base64.b64decode(data['image_data'])
+        
+        # Generate embedding
+        embedding_result = FaceRecognitionService.generate_embedding(image_data)
+        
+        if not embedding_result['success']:
+            return jsonify({'error': embedding_result['message']}), 400
+        
+        return jsonify({
+            'embedding': embedding_result['embedding'].tolist(),
+            'quality_score': embedding_result['quality_score'],
+            'face_coordinates': embedding_result['face_coordinates']
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Embedding generation error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@face_recognition_bp.route('/recognize', methods=['POST'])
+@jwt_required()
+def recognize_face():
+    """Recognize face against database"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['image_data', 'class_id']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        # Decode base64 image
+        image_data = base64.b64decode(data['image_data'])
+        
+        # Recognize face
+        recognition_result = FaceRecognitionService.recognize_face(
+            image_data=image_data,
+            class_id=data['class_id'],
+            threshold=data.get('threshold', 0.6)
+        )
+        
+        if recognition_result['student_found']:
+            return jsonify({
+                'student_found': True,
+                'student': recognition_result['student'],
+                'confidence_score': recognition_result['confidence_score'],
+                'face_coordinates': recognition_result['face_coordinates']
+            }), 200
+        else:
+            return jsonify({
+                'student_found': False,
+                'max_confidence': recognition_result.get('max_confidence', 0),
+                'message': 'No matching student found'
+            }), 404
+        
+    except Exception as e:
+        logger.error(f"Face recognition error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@face_recognition_bp.route('/quality', methods=['POST'])
+@jwt_required()
+def check_face_quality():
+    """Check face image quality for enrollment"""
+    try:
+        data = request.get_json()
+        
+        if 'image_data' not in data:
+            return jsonify({'error': 'No image data provided'}), 400
+        
+        # Decode base64 image
+        image_data = base64.b64decode(data['image_data'])
+        
+        # Check quality
+        quality_result = FaceRecognitionService.check_face_quality(image_data)
+        
+        return jsonify({
+            'quality_score': quality_result['quality_score'],
+            'is_good_quality': quality_result['is_good_quality'],
+            'issues': quality_result['issues'],
+            'recommendations': quality_result['recommendations']
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Face quality check error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@face_recognition_bp.route('/liveness', methods=['POST'])
+@jwt_required()
+def check_liveness():
+    """Check if face is from a live person (anti-spoofing)"""
+    try:
+        data = request.get_json()
+        
+        if 'image_data' not in data:
+            return jsonify({'error': 'No image data provided'}), 400
+        
+        # Decode base64 image
+        image_data = base64.b64decode(data['image_data'])
+        
+        # Check liveness
+        liveness_result = FaceRecognitionService.check_liveness(image_data)
+        
+        return jsonify({
+            'is_live': liveness_result['is_live'],
+            'confidence': liveness_result['confidence'],
+            'anti_spoofing_score': liveness_result['anti_spoofing_score']
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Liveness check error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500

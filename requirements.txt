@@ -1,0 +1,17 @@
+# Core dependencies only - install step by step to avoid conflicts
+Flask==2.3.3
+Flask-SQLAlchemy==3.0.5
+Flask-Migrate==4.0.5
+Flask-JWT-Extended==4.5.3
+Flask-CORS==4.0.0
+SQLAlchemy==2.0.21
+Werkzeug==2.3.7
+PyJWT==2.8.0
+python-dotenv==1.0.0
+requests==2.31.0
+
+# AI packages (install separately)
+# opencv-python
+# numpy  
+# Pillow
+# scikit-learn
