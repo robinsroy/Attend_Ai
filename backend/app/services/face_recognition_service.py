@@ -1,20 +1,387 @@
+"""
+Face Recognition Service using DeepFace with ArcFace embeddings
+Handles video capture, frame extraction, filtering, and embedding generation
+"""
 import cv2
 import numpy as np
-from typing import Dict, Any, List, Tuple, Optional
-import logging
-import base64
+from deepface import DeepFace
+import tempfile
 import os
+import time
+from typing import List, Tuple, Optional, Dict, Any
+import logging
+from pathlib import Path
+import base64
 from PIL import Image
 import io
 
 logger = logging.getLogger(__name__)
 
 class FaceRecognitionService:
-    """Service for face detection, recognition, and quality assessment"""
+    """Advanced face recognition service for student enrollment and attendance"""
     
+    def __init__(self):
+        """Initialize the face recognition service"""
+        self.model_name = "ArcFace"
+        self.detector_backend = "mtcnn"
+        self.embedding_size = 512
+        
+        # Quality thresholds
+        self.min_face_confidence = 0.95
+        self.min_blur_threshold = 100  # Laplacian variance threshold
+        self.min_brightness = 50
+        self.max_brightness = 200
+        
+    def capture_enrollment_video(self, duration_seconds: int = 20) -> Optional[str]:
+        """
+        Capture a 20-second enrollment video with guided prompts
+        Returns the path to the captured video file
+        """
+        try:
+            # Create temporary video file
+            video_path = os.path.join(tempfile.gettempdir(), f"enrollment_{int(time.time())}.avi")
+            
+            # Initialize camera
+            cap = cv2.VideoCapture(0)
+            if not cap.isOpened():
+                logger.error("Cannot access camera")
+                return None
+            
+            # Set camera properties
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            cap.set(cv2.CAP_PROP_FPS, 30)
+            
+            # Video writer setup
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            fps = 30
+            frame_size = (1280, 720)
+            out = cv2.VideoWriter(video_path, fourcc, fps, frame_size)
+            
+            start_time = time.time()
+            frame_count = 0
+            
+            logger.info(f"Starting {duration_seconds}-second enrollment video capture")
+            
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                elapsed_time = time.time() - start_time
+                remaining_time = duration_seconds - elapsed_time
+                
+                if elapsed_time >= duration_seconds:
+                    break
+                
+                # Add guidance text based on time
+                frame_with_guidance = self._add_guidance_overlay(frame, elapsed_time, duration_seconds)
+                
+                # Write frame to video
+                out.write(frame_with_guidance)
+                frame_count += 1
+            
+            # Cleanup
+            cap.release()
+            out.release()
+            cv2.destroyAllWindows()
+            
+            logger.info(f"Video capture completed. {frame_count} frames captured")
+            return video_path
+            
+        except Exception as e:
+            logger.error(f"Error capturing enrollment video: {str(e)}")
+            return None
+    
+    def _add_guidance_overlay(self, frame, elapsed_time: float, total_duration: int):
+        """Add guidance text overlay to video frame"""
+        frame_copy = frame.copy()
+        height, width = frame_copy.shape[:2]
+        
+        # Determine guidance message based on elapsed time
+        progress = elapsed_time / total_duration
+        
+        if progress < 0.3:
+            message = "Look straight at the camera"
+            color = (0, 255, 0)  # Green
+        elif progress < 0.6:
+            message = "Slowly turn your head to the left"
+            color = (0, 165, 255)  # Orange
+        elif progress < 0.9:
+            message = "Slowly turn your head to the right"
+            color = (0, 165, 255)  # Orange
+        else:
+            message = "Look straight - Almost done!"
+            color = (0, 255, 0)  # Green
+        
+        # Add semi-transparent overlay
+        overlay = frame_copy.copy()
+        cv2.rectangle(overlay, (0, 0), (width, 80), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.7, frame_copy, 0.3, 0, frame_copy)
+        
+        # Add guidance text
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(frame_copy, message, (50, 35), font, 1, color, 2)
+        
+        # Add time remaining
+        remaining = total_duration - elapsed_time
+        time_text = f"Time remaining: {remaining:.1f}s"
+        cv2.putText(frame_copy, time_text, (50, 65), font, 0.6, (255, 255, 255), 2)
+        
+        return frame_copy
+    
+    def extract_and_filter_frames(self, video_path: str) -> List[np.ndarray]:
+        """
+        Extract frames from video and filter for quality
+        Returns list of high-quality frames suitable for embedding generation
+        """
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                logger.error(f"Cannot open video file: {video_path}")
+                return []
+            
+            good_frames = []
+            frame_count = 0
+            
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                frame_count += 1
+                
+                # Skip frames (analyze every 5th frame for efficiency)
+                if frame_count % 5 != 0:
+                    continue
+                
+                # Quality checks
+                if self._is_frame_good_quality(frame):
+                    good_frames.append(frame)
+                    
+                    # Limit to max 50 good frames
+                    if len(good_frames) >= 50:
+                        break
+            
+            cap.release()
+            
+            logger.info(f"Extracted {len(good_frames)} good quality frames from {frame_count} total frames")
+            return good_frames
+            
+        except Exception as e:
+            logger.error(f"Error extracting frames: {str(e)}")
+            return []
+    
+    def _is_frame_good_quality(self, frame: np.ndarray) -> bool:
+        """
+        Check if frame meets quality criteria for face recognition
+        """
+        try:
+            # Convert to grayscale for quality checks
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+            # Check brightness
+            mean_brightness = np.mean(gray)
+            if mean_brightness < self.min_brightness or mean_brightness > self.max_brightness:
+                return False
+            
+            # Check blur using Laplacian variance
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            if laplacian_var < self.min_blur_threshold:
+                return False
+            
+            # Check if face is detected with high confidence
+            try:
+                faces = DeepFace.extract_faces(
+                    frame, 
+                    detector_backend=self.detector_backend,
+                    enforce_detection=False,
+                    align=True
+                )
+                
+                if len(faces) != 1:  # Should have exactly one face
+                    return False
+                
+                # Additional face quality checks could be added here
+                return True
+                
+            except Exception:
+                return False
+            
+        except Exception as e:
+            logger.error(f"Error checking frame quality: {str(e)}")
+            return False
+    
+    def generate_embeddings_from_frames(self, frames: List[np.ndarray]) -> List[np.ndarray]:
+        """
+        Generate ArcFace embeddings from good quality frames
+        """
+        embeddings = []
+        
+        for i, frame in enumerate(frames):
+            try:
+                # Generate embedding using DeepFace with ArcFace
+                embedding = DeepFace.represent(
+                    frame,
+                    model_name=self.model_name,
+                    detector_backend=self.detector_backend,
+                    enforce_detection=False,
+                    align=True
+                )
+                
+                if embedding and len(embedding) > 0:
+                    # DeepFace returns list of embeddings, take the first one
+                    emb_vector = np.array(embedding[0]["embedding"])
+                    embeddings.append(emb_vector)
+                    
+            except Exception as e:
+                logger.warning(f"Failed to generate embedding for frame {i}: {str(e)}")
+                continue
+        
+        logger.info(f"Generated {len(embeddings)} embeddings from {len(frames)} frames")
+        return embeddings
+    
+    def create_master_embedding(self, embeddings: List[np.ndarray]) -> Optional[np.ndarray]:
+        """
+        Create master embedding by averaging all individual embeddings
+        """
+        if not embeddings:
+            logger.error("No embeddings provided for master embedding creation")
+            return None
+        
+        try:
+            # Convert to numpy array and calculate mean
+            embeddings_array = np.array(embeddings)
+            master_embedding = np.mean(embeddings_array, axis=0)
+            
+            # Normalize the master embedding
+            master_embedding = master_embedding / np.linalg.norm(master_embedding)
+            
+            logger.info(f"Created master embedding from {len(embeddings)} individual embeddings")
+            return master_embedding
+            
+        except Exception as e:
+            logger.error(f"Error creating master embedding: {str(e)}")
+            return None
+    
+    def process_enrollment_video(self, video_path: str) -> Tuple[Optional[np.ndarray], float]:
+        """
+        Complete enrollment processing pipeline
+        Returns master embedding and quality score
+        """
+        try:
+            # Extract and filter frames
+            good_frames = self.extract_and_filter_frames(video_path)
+            
+            if len(good_frames) < 5:  # Need minimum 5 good frames
+                logger.error(f"Insufficient good quality frames: {len(good_frames)}")
+                return None, 0.0
+            
+            # Generate embeddings
+            embeddings = self.generate_embeddings_from_frames(good_frames)
+            
+            if len(embeddings) < 3:  # Need minimum 3 embeddings
+                logger.error(f"Insufficient embeddings generated: {len(embeddings)}")
+                return None, 0.0
+            
+            # Create master embedding
+            master_embedding = self.create_master_embedding(embeddings)
+            
+            if master_embedding is None:
+                return None, 0.0
+            
+            # Calculate quality score based on consistency of embeddings
+            quality_score = self._calculate_quality_score(embeddings)
+            
+            # Cleanup video file
+            try:
+                os.remove(video_path)
+            except:
+                pass
+            
+            return master_embedding, quality_score
+            
+        except Exception as e:
+            logger.error(f"Error processing enrollment video: {str(e)}")
+            return None, 0.0
+    
+    def _calculate_quality_score(self, embeddings: List[np.ndarray]) -> float:
+        """
+        Calculate quality score based on consistency of embeddings
+        """
+        if len(embeddings) < 2:
+            return 0.0
+        
+        try:
+            # Calculate pairwise similarities
+            similarities = []
+            for i in range(len(embeddings)):
+                for j in range(i + 1, len(embeddings)):
+                    sim = np.dot(embeddings[i], embeddings[j])
+                    similarities.append(sim)
+            
+            # Quality score is the mean similarity
+            quality_score = np.mean(similarities)
+            
+            # Normalize to 0-100 scale
+            quality_score = max(0, min(100, quality_score * 100))
+            
+            return quality_score
+            
+        except Exception as e:
+            logger.error(f"Error calculating quality score: {str(e)}")
+            return 0.0
+    
+    def recognize_face_live(self, frame: np.ndarray, master_embeddings: List[Tuple[int, np.ndarray]], threshold: float = 0.6) -> Optional[int]:
+        """
+        Recognize face in live frame against master embeddings
+        Returns student_id if recognized, None if not
+        """
+        try:
+            # Generate embedding for current frame
+            embedding = DeepFace.represent(
+                frame,
+                model_name=self.model_name,
+                detector_backend=self.detector_backend,
+                enforce_detection=False,
+                align=True
+            )
+            
+            if not embedding or len(embedding) == 0:
+                return None
+            
+            current_embedding = np.array(embedding[0]["embedding"])
+            current_embedding = current_embedding / np.linalg.norm(current_embedding)
+            
+            # Compare against all master embeddings
+            best_match_id = None
+            best_similarity = -1
+            
+            for student_id, master_embedding in master_embeddings:
+                similarity = np.dot(current_embedding, master_embedding)
+                
+                if similarity > best_similarity and similarity > threshold:
+                    best_similarity = similarity
+                    best_match_id = student_id
+            
+            return best_match_id
+            
+        except Exception as e:
+            logger.error(f"Error recognizing face: {str(e)}")
+            return None
+    
+    def serialize_embedding(self, embedding: np.ndarray) -> bytes:
+        """Convert numpy embedding to bytes for database storage"""
+        return embedding.tobytes()
+    
+    def deserialize_embedding(self, embedding_bytes: bytes) -> np.ndarray:
+        """Convert bytes from database back to numpy array"""
+        return np.frombuffer(embedding_bytes, dtype=np.float64).reshape(-1)
+    
+    # Legacy methods for backward compatibility
     @staticmethod
     def detect_faces(image_data: bytes) -> Dict[str, Any]:
-        """Detect faces in image data"""
+        """Detect faces in image data - legacy method for compatibility"""
         try:
             # Convert bytes to cv2 image
             nparr = np.frombuffer(image_data, np.uint8)
@@ -380,3 +747,127 @@ class FaceRecognitionService:
         except Exception as e:
             logger.error(f"Quality score calculation error: {str(e)}")
             return 0.5  # Default medium quality
+
+    @staticmethod
+    def process_video_enrollment(student_id: int, video_data: bytes) -> Dict[str, Any]:
+        """
+        Process video for student enrollment and generate master embedding
+        This method replaces the previous video processing workflow
+        """
+        try:
+            from app.models.student import Student
+            from app import db
+            
+            # Get student record
+            student = Student.query.get(student_id)
+            if not student:
+                return {
+                    'success': False,
+                    'error': 'Student not found'
+                }
+            
+            # Save video data to temporary file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+            temp_file.write(video_data)
+            temp_file.close()
+            
+            try:
+                # Extract frames from video
+                frames_data = FaceRecognitionService.extract_frames_from_video(temp_file.name)
+                
+                if not frames_data or len(frames_data) == 0:
+                    return {
+                        'success': False,
+                        'error': 'No frames could be extracted from video'
+                    }
+                
+                # Filter high-quality frames
+                high_quality_frames = []
+                quality_scores = []
+                
+                for frame_data in frames_data:
+                    # Detect faces in frame
+                    face_result = FaceRecognitionService.detect_faces(frame_data['data'])
+                    
+                    if face_result['faces']:
+                        # Use first detected face
+                        face = face_result['faces'][0]
+                        
+                        # Calculate quality score
+                        quality_score = FaceRecognitionService._calculate_quality_score(
+                            frame_data['data'], 
+                            face['coordinates']
+                        )
+                        
+                        if quality_score > 0.6:  # Only use good quality frames
+                            high_quality_frames.append(frame_data['data'])
+                            quality_scores.append(quality_score)
+                
+                if not high_quality_frames:
+                    return {
+                        'success': False,
+                        'error': 'No high-quality face frames found in video'
+                    }
+                
+                # Generate embeddings for best frames
+                embeddings = []
+                best_quality_score = 0
+                
+                # Sort by quality and take top 5 frames
+                sorted_frames = sorted(
+                    zip(high_quality_frames, quality_scores), 
+                    key=lambda x: x[1], 
+                    reverse=True
+                )[:5]
+                
+                for frame_data, quality_score in sorted_frames:
+                    try:
+                        # Generate embedding for this frame
+                        embedding_result = FaceRecognitionService.generate_embedding(frame_data)
+                        
+                        if embedding_result['success']:
+                            embeddings.append(embedding_result['embedding'])
+                            best_quality_score = max(best_quality_score, quality_score)
+                    
+                    except Exception as e:
+                        logger.warning(f"Failed to generate embedding for frame: {str(e)}")
+                        continue
+                
+                if not embeddings:
+                    return {
+                        'success': False,
+                        'error': 'Failed to generate embeddings from video frames'
+                    }
+                
+                # Create master embedding (average of all embeddings)
+                master_embedding = np.mean(embeddings, axis=0)
+                master_embedding = master_embedding / np.linalg.norm(master_embedding)  # Normalize
+                
+                # Update student record with embedding
+                student.master_embedding = master_embedding.tobytes()
+                student.face_quality_score = best_quality_score
+                student.enrollment_video_path = f"student_{student_id}_enrollment.mp4"
+                
+                db.session.commit()
+                
+                return {
+                    'success': True,
+                    'quality_score': best_quality_score,
+                    'frames_processed': len(high_quality_frames),
+                    'embedding_dimension': len(master_embedding),
+                    'message': 'Video processed and master embedding created successfully'
+                }
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_file.name)
+                except:
+                    pass
+            
+        except Exception as e:
+            logger.error(f"Video enrollment processing error: {str(e)}")
+            return {
+                'success': False,
+                'error': f'Video processing failed: {str(e)}'
+            }

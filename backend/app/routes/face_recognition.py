@@ -154,3 +154,42 @@ def check_liveness():
     except Exception as e:
         logger.error(f"Liveness check error: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+@face_recognition_bp.route('/video_embedding', methods=['POST'])
+@jwt_required()
+def generate_embedding_from_video():
+    """Generate face embedding from video for student enrollment"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['student_id', 'video_data']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        student_id = data['student_id']
+        video_data = base64.b64decode(data['video_data'])
+        
+        # Process video and generate embeddings
+        embedding_result = FaceRecognitionService.process_video_enrollment(
+            student_id=student_id,
+            video_data=video_data
+        )
+        
+        if embedding_result['success']:
+            return jsonify({
+                'success': True,
+                'quality_score': embedding_result['quality_score'],
+                'frames_processed': embedding_result['frames_processed'],
+                'embedding_dimension': embedding_result['embedding_dimension'],
+                'message': 'Video processed successfully and embeddings generated'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': embedding_result['error']
+            }), 400
+        
+    except Exception as e:
+        logger.error(f"Video embedding generation error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500

@@ -200,3 +200,90 @@ def get_reports():
     except Exception as e:
         logger.error(f"Generate reports error: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+@attendance_bp.route('/realtime', methods=['POST'])
+@jwt_required()
+def process_realtime_attendance():
+    """Process real-time attendance with face recognition"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['session_id', 'image_data']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        session_id = data['session_id']
+        image_data = data['image_data']
+        
+        # Get attendance session
+        session = AttendanceService.get_session_by_id(session_id)
+        if not session:
+            return jsonify({'error': 'Attendance session not found'}), 404
+        
+        if not session.is_active:
+            return jsonify({'error': 'Attendance session is not active'}), 400
+        
+        # Process the image for face recognition
+        from app.services.face_recognition_service import FaceRecognitionService
+        import base64
+        
+        # Decode image
+        image_bytes = base64.b64decode(image_data)
+        
+        # Recognize faces in the image
+        recognition_result = FaceRecognitionService.recognize_face(
+            image_data=image_bytes,
+            class_id=session.class_id,
+            threshold=session.detection_threshold or 0.6
+        )
+        
+        if recognition_result['student_found']:
+            student = recognition_result['student']
+            confidence = recognition_result['confidence_score']
+            
+            # Check if student is already marked present
+            existing_record = AttendanceService.get_student_attendance_record(
+                session_id=session_id,
+                student_id=student['id']
+            )
+            
+            if existing_record and existing_record.status == 'present':
+                return jsonify({
+                    'already_marked': True,
+                    'student': student,
+                    'confidence': confidence,
+                    'message': f"Student {student['full_name']} is already marked present"
+                }), 200
+            
+            # Mark attendance
+            attendance_record = AttendanceService.mark_attendance(
+                session_id=session_id,
+                student_id=student['id'],
+                status='present',
+                confidence_score=confidence,
+                detection_method='face_recognition'
+            )
+            
+            return jsonify({
+                'success': True,
+                'student_recognized': True,
+                'student': student,
+                'confidence': confidence,
+                'attendance_marked': True,
+                'record_id': attendance_record.id,
+                'message': f"Attendance marked for {student['full_name']}"
+            }), 200
+        
+        else:
+            # No student recognized
+            return jsonify({
+                'success': True,
+                'student_recognized': False,
+                'max_confidence': recognition_result.get('max_confidence', 0),
+                'message': 'No registered student recognized in the image'
+            }), 200
+        
+    except Exception as e:
+        logger.error(f"Real-time attendance processing error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500

@@ -35,12 +35,14 @@ def create_app(config_class=Config):
     from app.routes.classes import classes_bp
     from app.routes.attendance import attendance_bp
     from app.routes.face_recognition import face_recognition_bp
+    from app.routes.video_enrollment import video_enrollment_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(students_bp, url_prefix='/api/students')
     app.register_blueprint(classes_bp, url_prefix='/api/classes')
     app.register_blueprint(attendance_bp, url_prefix='/api/attendance')
     app.register_blueprint(face_recognition_bp, url_prefix='/api/face')
+    app.register_blueprint(video_enrollment_bp, url_prefix='/api')
     
     # Error handlers
     @app.errorhandler(404)
