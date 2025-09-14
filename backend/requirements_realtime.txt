@@ -1,0 +1,5 @@
+# Additional requirements for real-time recognition
+dlib==19.24.1
+opencv-python==4.8.1.78
+deepface==0.0.95
+cmake==3.25.2
