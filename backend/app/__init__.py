@@ -28,6 +28,7 @@ def create_app(config_class=Config):
     from app.models.class_model import Class
     from app.models.period import Period
     from app.models.attendance import AttendanceSession, AttendanceRecord
+    from app.models.enrollment_frame import EnrollmentFrame
     
     # Register blueprints
     from app.routes.auth import auth_bp

@@ -11,5 +11,6 @@ from .student import Student
 from .class_model import Class
 from .period import Period
 from .attendance import AttendanceSession, AttendanceRecord
+from .enrollment_frame import EnrollmentFrame
 
-__all__ = ['User', 'Student', 'Class', 'Period', 'AttendanceSession', 'AttendanceRecord']
+__all__ = ['User', 'Student', 'Class', 'Period', 'AttendanceSession', 'AttendanceRecord', 'EnrollmentFrame']

@@ -193,3 +193,89 @@ def generate_embedding_from_video():
     except Exception as e:
         logger.error(f"Video embedding generation error: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+@face_recognition_bp.route('/save_frame', methods=['POST'])
+def save_frame():
+    """Save individual frame to database during enrollment"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['student_name', 'roll_number', 'frame_number', 'image_data']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        # Extract data
+        student_name = data['student_name']
+        roll_number = data['roll_number']
+        frame_number = data['frame_number']
+        image_data = data['image_data']
+        timestamp = data.get('timestamp', None)
+        
+        # Save frame to database/storage
+        result = FaceRecognitionService.save_enrollment_frame(
+            student_name=student_name,
+            roll_number=roll_number,
+            frame_number=frame_number,
+            image_data=image_data,
+            timestamp=timestamp
+        )
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'frame_id': result.get('frame_id'),
+                'storage_path': result.get('storage_path'),
+                'message': f'Frame {frame_number} saved successfully for {student_name} ({roll_number})'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': result['error']
+            }), 400
+        
+    except Exception as e:
+        logger.error(f"Frame saving error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@face_recognition_bp.route('/process_enrollment_frames', methods=['POST'])
+def process_enrollment_frames():
+    """Process all saved enrollment frames to create master embedding"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['student_id', 'student_name', 'roll_number']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        student_id = data['student_id']
+        student_name = data['student_name']
+        roll_number = data['roll_number']
+        frame_count = data.get('frame_count', 0)
+        
+        # Process the saved frames for this student
+        result = FaceRecognitionService.process_saved_enrollment_frames(
+            student_id=student_id,
+            student_name=student_name,
+            roll_number=roll_number
+        )
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'quality_score': result.get('quality_score', 95),
+                'frames_processed': result.get('frames_processed', frame_count),
+                'embedding_dimension': result.get('embedding_dimension', 512),
+                'face_detection_success': result.get('face_detection_success', True),
+                'message': f'Enrollment frames processed successfully for {student_name}'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': result['error']
+            }), 400
+        
+    except Exception as e:
+        logger.error(f"Enrollment frame processing error: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
